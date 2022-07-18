@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="too_many_devices_using_your_account">Too many devices using your account.</string>
+    <string name="logout_the_selected_devices">Logout the selected devices</string>
+    <string name="device_icon">Device icon</string>
+    <string name="last_update">Last update</string>
+    <string name="now">Now</string>
+</resources>

@@ -1,11 +1,13 @@
 package com.example.sabil_android_sdk
 
-import android.provider.Settings
+import android.content.Context
+import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
-import com.example.sabil_android_sdk.models.SabilAppearanceConfig
-import com.example.sabil_android_sdk.models.SabilAttachData
-import com.example.sabil_android_sdk.models.SabilAttachResponse
-import com.example.sabil_android_sdk.models.SabilLimitConfig
+import androidx.fragment.app.FragmentManager
+import com.example.sabil_android_sdk.models.*
+import com.example.sabil_android_sdk.ui.SabilDialog
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -16,27 +18,46 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import java.util.*
+
 
 object Sabil {
-    val baseUrl = "http://10.0.2.2:8007/"
+    const val baseUrl = "https://83b5-74-199-74-188.ngrok.io"
     lateinit var clientId: String
     lateinit var userId: String
+    lateinit var deviceId: String
     var secret: String? = null
     var appearanceConfig: SabilAppearanceConfig = SabilAppearanceConfig(true)
-    var onLogoutCurrentDevice: (() -> Unit)? = null
-    var onLogoutOtherDevice: (() -> Unit)? = null
-    var onLimitExceeded: (() -> Unit)? = null
     var limitConfig = SabilLimitConfig(1, 2)
+    var onLogoutCurrentDevice: (() -> Unit?)? = null
+    var onLogoutOtherDevice: (() -> Unit?)? = null
+    var onLimitExceeded: (() -> Unit?)? = null
 
     fun configure(
+        context: Context,
         clientId: String,
         secret: String? = null,
         userId: String? = null,
         appearanceConfig: SabilAppearanceConfig? = null,
-        onLogoutCurrentDevice: (() -> Unit)? = null,
-        onLogoutOtherDevice: (() -> Unit)? = null,
-        onLimitExceeded: (() -> Unit)? = null
+        limitConfig: SabilLimitConfig? = null,
+        onLogoutCurrentDevice: (() -> Unit?)? = null,
+        onLogoutOtherDevice: (() -> Unit?)? = null,
+        onLimitExceeded: (() -> Unit?)? = null
     ) {
+        val sharedPreferences =
+            context.getSharedPreferences("sabil_shared_preference", Context.MODE_PRIVATE)
+        if (sharedPreferences.contains("sabil_device_id")) {
+            val stored = sharedPreferences.getString("sabil_device_id", "-1")
+            if (stored is String && stored != "-1") {
+                deviceId = stored
+            } else {
+                generateDeviceId(sharedPreferences)
+            }
+        } else {
+            generateDeviceId(sharedPreferences)
+        }
+
         this.clientId = clientId
         this.secret = secret
         if (userId != null) {
@@ -45,65 +66,128 @@ object Sabil {
         if (appearanceConfig != null) {
             this.appearanceConfig = appearanceConfig
         }
+        if (limitConfig != null) {
+            this.limitConfig = limitConfig
+        }
         this.onLogoutCurrentDevice = onLogoutCurrentDevice
         this.onLogoutOtherDevice = onLogoutOtherDevice
         this.onLimitExceeded = onLimitExceeded
     }
 
-    fun attach(metadata: Map<String, Any>? = null) {
+    private fun generateDeviceId(sharedPreferences: SharedPreferences) {
+        deviceId = UUID.randomUUID().toString()
+        with(sharedPreferences.edit()) {
+            putString("sabil_device_id", deviceId)
+            commit()
+        }
+    }
+
+    fun attach(fragmentManager: FragmentManager) {
         if (!this::userId.isInitialized) {
-            Log.d("Sabil SDK", "You must initialize the userId before calling attach")
+            Log.d("SabilSDK", "You must initialize the userId before calling attach")
             return
         }
         httpRequest<SabilAttachResponse, SabilAttachData>(
             "POST",
             "$baseUrl/usage/attach",
-            SabilAttachData(getDeviceId(), userId)
+            SabilAttachData(
+                deviceId,
+                userId,
+                SabilDeviceInfo(
+                    SabilOS("Android", android.os.Build.VERSION.RELEASE),
+                    SabilDevice(android.os.Build.MANUFACTURER, "mobile", android.os.Build.MODEL)
+                )
+            )
         ) {
             if (it !is SabilAttachResponse) {
                 return@httpRequest
             }
+            if (!it.success || it.attached_devices <= limitConfig.overallLimit) {
+                return@httpRequest
+            }
+            onLimitExceeded?.invoke()
             if (!appearanceConfig.showBlockingDialog) {
                 return@httpRequest
             }
-            if (it.success && it.attached_devices > limitConfig.overallLimit) {
-                //TODO: show blocking dialog
-                onLimitExceeded?.invoke()
+            val dialog = SabilDialog()
+            dialog.show(fragmentManager, SabilDialog.TAG)
+            getUserAttachedDevices {
+                Log.d("SabilSDK", "attached devices: $it")
+                dialog.viewModel.deviceUsages.value = it
             }
+        }
+    }
+
+
+    fun detach(usage: SabilDeviceUsage?) {
+        if (!this::userId.isInitialized) {
+            Log.d("SabilSDK", "You must initialize the userId before calling attach")
+            return
+        }
+        httpRequest<SabilAttachResponse, SabilDetachData>(
+            "POST",
+            "$baseUrl/usage/detach",
+            SabilDetachData(usage?.device_id ?: deviceId, userId)
+        ) {
+            //TODO: hide dialog if needed
+            //TODO: update attached devices list
+        }
+    }
+
+    fun getUserAttachedDevices(onComplete: (List<SabilDeviceUsage>) -> Unit) {
+        if (!this::userId.isInitialized) {
+            Log.d("SabilSDK", "You must initialize the userId before calling attach")
+            return
+        }
+        httpRequest<List<SabilDeviceUsage>, Unit>(
+            "GET",
+            "$baseUrl/usage/$userId/attached_devices",
+            null
+        ) {
+            onComplete(it ?: listOf())
         }
     }
 
     inline fun <reified T, reified S> httpRequest(
-        method: String,
+        reqMethod: String,
         urlString: String,
         body: S? = null,
-        noinline onComplete: ((T?) -> Unit)? = null
+        noinline onComplete: ((T?) -> Unit)
     ) {
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
-            val client = HttpClient(CIO) {
-                install(ContentNegotiation) {
-                    json()
-                }
-            }
-            val response = client.request {
-                this.method = HttpMethod(method)
-                url(urlString)
-                basicAuth(clientId, secret ?: "")
-                contentType(ContentType.Application.Json)
-                accept(ContentType.Application.Json)
-                if (body != null) {
-                    setBody(body)
-                }
-            }
-            val data = response.body() as? T
-            if (data != null) {
-                onComplete?.invoke(data)
-            }
-        }
-    }
+            try {
+                val client = HttpClient(CIO) {
+                    install(ContentNegotiation) {
+                        json(Json {
+                            ignoreUnknownKeys = true
 
-    fun getDeviceId(): String {
-        return Settings.Secure.ANDROID_ID
+                        })
+                    }
+                }
+                val response = client.request(urlString) {
+                    method = HttpMethod.parse(reqMethod)
+                    headers {
+                        append(HttpHeaders.Authorization, "Basic $clientId:${secret ?: ""}")
+                    }
+                    contentType(ContentType.Application.Json)
+                    accept(ContentType.Application.Json)
+                    if (body != null) {
+                        setBody(body)
+                    }
+                }
+                val data = response.body() as? T
+                if (data != null) {
+                    Handler(Looper.getMainLooper()).post {
+                        onComplete(data)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d("SabilSDK", "Error attaching ${e.message}")
+            } finally {
+                Log.d("SabilSDK", "Attach complete")
+            }
+
+        }
     }
 }
