@@ -5,4 +5,10 @@
     <string name="device_icon">Device icon</string>
     <string name="last_update">Last update</string>
     <string name="now">Now</string>
+    <plurals name="logout_to_proceed">
+        <item quantity="zero">To proceed, please log out of 0 devices from the list below.</item>
+        <item quantity="one">To proceed, please log out of one device from the list below.</item>
+        <item quantity="other">To proceed, please log out of %d device from the list below.</item>
+    </plurals>
+
 </resources>

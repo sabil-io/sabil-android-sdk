@@ -6,8 +6,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.fragment.app.FragmentManager
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import com.example.sabil_android_sdk.models.*
 import com.example.sabil_android_sdk.ui.SabilDialog
+import com.example.sabil_android_sdk.view_models.SabilDialogViewModel
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -26,13 +29,16 @@ object Sabil {
     const val baseUrl = "https://83b5-74-199-74-188.ngrok.io"
     lateinit var clientId: String
     lateinit var userId: String
-    lateinit var deviceId: String
     var secret: String? = null
     var appearanceConfig: SabilAppearanceConfig = SabilAppearanceConfig(true)
-    var limitConfig = SabilLimitConfig(1, 2)
     var onLogoutCurrentDevice: (() -> Unit?)? = null
     var onLogoutOtherDevice: (() -> Unit?)? = null
     var onLimitExceeded: (() -> Unit?)? = null
+    val viewModel =
+        ViewModelProvider {
+            ViewModelStore()
+        }[SabilDialogViewModel::class.java]
+    var dialog: SabilDialog? = null
 
     fun configure(
         context: Context,
@@ -50,7 +56,7 @@ object Sabil {
         if (sharedPreferences.contains("sabil_device_id")) {
             val stored = sharedPreferences.getString("sabil_device_id", "-1")
             if (stored is String && stored != "-1") {
-                deviceId = stored
+                viewModel.deviceId.value = stored
             } else {
                 generateDeviceId(sharedPreferences)
             }
@@ -66,18 +72,16 @@ object Sabil {
         if (appearanceConfig != null) {
             this.appearanceConfig = appearanceConfig
         }
-        if (limitConfig != null) {
-            this.limitConfig = limitConfig
-        }
+        viewModel.limitConfig.value = limitConfig ?: SabilLimitConfig(1, 2)
         this.onLogoutCurrentDevice = onLogoutCurrentDevice
         this.onLogoutOtherDevice = onLogoutOtherDevice
         this.onLimitExceeded = onLimitExceeded
     }
 
     private fun generateDeviceId(sharedPreferences: SharedPreferences) {
-        deviceId = UUID.randomUUID().toString()
+        viewModel.deviceId.value = UUID.randomUUID().toString()
         with(sharedPreferences.edit()) {
-            putString("sabil_device_id", deviceId)
+            putString("sabil_device_id", viewModel.deviceId.value)
             commit()
         }
     }
@@ -91,46 +95,67 @@ object Sabil {
             "POST",
             "$baseUrl/usage/attach",
             SabilAttachData(
-                deviceId,
+                viewModel.deviceId.value ?: "",
                 userId,
                 SabilDeviceInfo(
                     SabilOS("Android", android.os.Build.VERSION.RELEASE),
                     SabilDevice(android.os.Build.MANUFACTURER, "mobile", android.os.Build.MODEL)
                 )
             )
-        ) {
-            if (it !is SabilAttachResponse) {
+        ) { attachResponse ->
+            if (attachResponse !is SabilAttachResponse) {
                 return@httpRequest
             }
-            if (!it.success || it.attached_devices <= limitConfig.overallLimit) {
+            if (!attachResponse.success || attachResponse.attached_devices <= (viewModel.limitConfig.value?.overallLimit
+                    ?: 2)
+            ) {
                 return@httpRequest
             }
             onLimitExceeded?.invoke()
             if (!appearanceConfig.showBlockingDialog) {
                 return@httpRequest
             }
-            val dialog = SabilDialog()
-            dialog.show(fragmentManager, SabilDialog.TAG)
+            dialog = SabilDialog(viewModel) {
+                for (usage in it) {
+                    detach(usage)
+                }
+            }
+            dialog?.isCancelable = false
+            dialog?.show(fragmentManager, SabilDialog.TAG)
             getUserAttachedDevices {
-                Log.d("SabilSDK", "attached devices: $it")
-                dialog.viewModel.deviceUsages.value = it
+                viewModel.deviceUsages.value = it.toMutableList()
             }
         }
     }
 
 
     fun detach(usage: SabilDeviceUsage?) {
+        viewModel.detachLoading.value = true
         if (!this::userId.isInitialized) {
             Log.d("SabilSDK", "You must initialize the userId before calling attach")
+            viewModel.detachLoading.value = false
             return
         }
         httpRequest<SabilAttachResponse, SabilDetachData>(
             "POST",
             "$baseUrl/usage/detach",
-            SabilDetachData(usage?.device_id ?: deviceId, userId)
-        ) {
-            //TODO: hide dialog if needed
-            //TODO: update attached devices list
+            SabilDetachData(usage?.device_id ?: viewModel.deviceId.value ?: "", userId)
+        ) { attachResponse ->
+            if (attachResponse !is SabilAttachResponse || !attachResponse.success) {
+                return@httpRequest
+            }
+            if (usage == null || usage.device_id == viewModel.deviceId.value) {
+                onLogoutCurrentDevice?.invoke()
+            }
+            viewModel.deviceUsages.value?.removeAll { it.device_id == usage?.device_id }
+            viewModel.deviceUsages.postValue(viewModel.deviceUsages.value)
+            viewModel.detachLoading.value = true
+            if ((viewModel.deviceUsages.value?.size
+                    ?: 0) <= (viewModel.limitConfig.value?.overallLimit ?: 0)
+            ) {
+                dialog?.dismiss()
+                dialog = null
+            }
         }
     }
 
@@ -183,9 +208,7 @@ object Sabil {
                     }
                 }
             } catch (e: Exception) {
-                Log.d("SabilSDK", "Error attaching ${e.message}")
-            } finally {
-                Log.d("SabilSDK", "Attach complete")
+                Log.d("SabilSDK", "Error http request ${e.message}")
             }
 
         }

@@ -4,6 +4,8 @@
 
     <data>
 
+        <import type="android.view.View" />
+
         <variable
             name="viewModel"
             type="com.example.sabil_android_sdk.view_models.SabilDialogViewModel" />
@@ -13,7 +15,9 @@
         android:id="@+id/sabil_dialog_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:padding="8dp"
+        >
 
         <TextView
             android:id="@+id/too_man_devices_title"
@@ -24,28 +28,56 @@
             android:layout_marginVertical="16dp"
             android:text="@string/too_many_devices_using_your_account"
             android:textAlignment="center"
-            android:textFontWeight="800"
-            android:textSize="20sp" />
+            android:textColor="?android:textColorPrimary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/logout_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/too_man_devices_title"
+            android:layout_centerHorizontal="true"
+            android:layout_marginBottom="16dp"
+            android:textAlignment="center" />
 
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/attached_devices_rv"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_above="@id/logout_button"
-            android:layout_below="@id/too_man_devices_title"
+            android:layout_below="@id/logout_subtitle"
             android:layout_centerHorizontal="true"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/logout_subtitle"
+            android:layout_centerHorizontal="true"
+            android:indeterminate="true"
+            android:visibility="@{viewModel.fetchLoading ? View.VISIBLE : View.INVISIBLE}" />
 
         <Button
             android:id="@+id/logout_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_alignParentBottom="true"
+            android:layout_below="@id/attached_devices_rv"
             android:layout_centerHorizontal="true"
             android:layout_marginVertical="12dp"
+            android:padding="10dp"
             android:text="@string/logout_the_selected_devices"
-            android:textAllCaps="false" />
+            android:textAllCaps="false"
+            android:visibility="@{viewModel.detachLoading ? View.INVISIBLE : View.VISIBLE}" />
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/attached_devices_rv"
+            android:layout_centerHorizontal="true"
+            android:layout_marginVertical="12dp"
+            android:indeterminate="true"
+            android:visibility="@{viewModel.detachLoading ? View.VISIBLE : View.INVISIBLE}" />
 
     </RelativeLayout>
 </layout>
