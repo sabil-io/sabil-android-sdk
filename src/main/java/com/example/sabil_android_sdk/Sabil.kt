@@ -26,7 +26,7 @@ import java.util.*
 
 
 object Sabil {
-    const val baseUrl = "http://10.0.2.2:8007"
+    const val baseUrl = "https://api.sabil.io"
     lateinit var clientId: String
     lateinit var userId: String
     var secret: String? = null
