@@ -73,7 +73,7 @@ class SabilDialog(
     private fun updateLogoutSubtitle() {
         val overage =
             (viewModel.deviceUsages.value?.size ?: 0) - (viewModel.limitConfig.value?.overallLimit
-                ?: 0)
+                ?: viewModel.defaultDeviceLimit.value ?: 0)
         view?.findViewById<TextView>(R.id.logout_subtitle)?.text = resources.getQuantityString(
             R.plurals.logout_to_proceed, overage, overage
         )

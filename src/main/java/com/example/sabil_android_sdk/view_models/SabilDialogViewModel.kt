@@ -25,5 +25,9 @@ class SabilDialogViewModel : ViewModel() {
         MutableLiveData()
     }
 
+    val defaultDeviceLimit: MutableLiveData<Int> by lazy {
+        MutableLiveData()
+    }
+
 
 }

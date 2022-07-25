@@ -26,11 +26,11 @@ import java.util.*
 
 
 object Sabil {
-    const val baseUrl = "https://api.sabil.io"
+    const val baseUrl = "http://10.0.2.2:8007"
     lateinit var clientId: String
     lateinit var userId: String
     var secret: String? = null
-    var appearanceConfig: SabilAppearanceConfig = SabilAppearanceConfig(true)
+    var appearanceConfig: SabilAppearanceConfig? = null
     var onLogoutCurrentDevice: (() -> Unit?)? = null
     var onLogoutOtherDevice: (() -> Unit?)? = null
     var onLimitExceeded: (() -> Unit?)? = null
@@ -72,7 +72,7 @@ object Sabil {
         if (appearanceConfig != null) {
             this.appearanceConfig = appearanceConfig
         }
-        viewModel.limitConfig.value = limitConfig ?: SabilLimitConfig(1, 2)
+        viewModel.limitConfig.value = limitConfig
         this.onLogoutCurrentDevice = onLogoutCurrentDevice
         this.onLogoutOtherDevice = onLogoutOtherDevice
         this.onLimitExceeded = onLimitExceeded
@@ -106,13 +106,16 @@ object Sabil {
             if (attachResponse !is SabilAttachResponse) {
                 return@httpRequest
             }
+            viewModel.defaultDeviceLimit.value = attachResponse.default_device_limit
             if (!attachResponse.success || attachResponse.attached_devices <= (viewModel.limitConfig.value?.overallLimit
-                    ?: 2)
+                    ?: attachResponse.default_device_limit)
             ) {
                 return@httpRequest
             }
             onLimitExceeded?.invoke()
-            if (!appearanceConfig.showBlockingDialog) {
+            val showDialog =
+                appearanceConfig?.showBlockingDialog ?: attachResponse.block_over_usage
+            if (!showDialog) {
                 return@httpRequest
             }
             dialog = SabilDialog(viewModel) {
@@ -150,8 +153,10 @@ object Sabil {
             viewModel.deviceUsages.value?.removeAll { it.device_id == usage?.device_id }
             viewModel.deviceUsages.postValue(viewModel.deviceUsages.value)
             viewModel.detachLoading.value = true
+            viewModel.defaultDeviceLimit.value = attachResponse.default_device_limit
             if ((viewModel.deviceUsages.value?.size
-                    ?: 0) <= (viewModel.limitConfig.value?.overallLimit ?: 0)
+                    ?: 0) <= (viewModel.limitConfig.value?.overallLimit
+                    ?: attachResponse.default_device_limit)
             ) {
                 dialog?.dismiss()
                 dialog = null
