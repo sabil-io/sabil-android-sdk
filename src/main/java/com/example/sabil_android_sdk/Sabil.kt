@@ -116,6 +116,7 @@ object Sabil {
                 return@httpRequest
             }
             viewModel.defaultDeviceLimit.value = state.default_device_limit
+            viewModel.deviceId.value = state.device_id
             if (!state.success || state.attached_devices <= (viewModel.limitConfig.value?.overallLimit
                     ?: state.default_device_limit)
             ) {
@@ -165,7 +166,7 @@ object Sabil {
             }
             viewModel.devices.value?.removeAll { it.id == device?.id }
             viewModel.devices.postValue(viewModel.devices.value)
-            viewModel.detachLoading.value = true
+            viewModel.detachLoading.value = false
             viewModel.defaultDeviceLimit.value = state.default_device_limit
             if ((viewModel.devices.value?.size
                     ?: 0) <= (viewModel.limitConfig.value?.overallLimit
@@ -175,6 +176,10 @@ object Sabil {
                 dialog = null
             }
         }
+    }
+
+    fun identify(metadata: Map<String, String>? = null) {
+
     }
 
     fun getUserAttachedDevices(onComplete: (List<SabilDevice>) -> Unit) {
@@ -191,7 +196,7 @@ object Sabil {
         }
     }
 
-    inline fun <reified T, reified S> httpRequest(
+    private inline fun <reified T, reified S> httpRequest(
         reqMethod: String,
         urlString: String,
         body: S? = null,
