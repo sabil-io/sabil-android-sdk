@@ -16,13 +16,13 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.sabil_android_sdk.R
 import com.example.sabil_android_sdk.adapters.SabilAttachedDevicesAdapter
 import com.example.sabil_android_sdk.databinding.SabilDialogViewBinding
-import com.example.sabil_android_sdk.models.SabilDeviceUsage
+import com.example.sabil_android_sdk.models.SabilDevice
 import com.example.sabil_android_sdk.view_models.SabilDialogViewModel
 
 
 class SabilDialog(
     private val viewModel: SabilDialogViewModel,
-    private val onLogout: (MutableSet<SabilDeviceUsage>) -> Unit
+    private val onLogout: (MutableSet<SabilDevice>) -> Unit
 ) :
     DialogFragment() {
     companion object {
@@ -38,7 +38,7 @@ class SabilDialog(
         if (!this::adapter.isInitialized) {
             adapter = SabilAttachedDevicesAdapter(
                 viewModel.deviceId.value ?: "",
-                viewModel.deviceUsages.value ?: listOf(),
+                viewModel.devices.value ?: listOf(),
                 mutableSetOf()
             )
         }
@@ -47,8 +47,8 @@ class SabilDialog(
             adapter.deviceId = it
             adapter.notifyDataSetChanged()
         }
-        viewModel.deviceUsages.observe(this) {
-            adapter.deviceUsages = it
+        viewModel.devices.observe(this) {
+            adapter.devices = it
             adapter.notifyDataSetChanged()
             updateLogoutSubtitle()
         }
@@ -72,7 +72,7 @@ class SabilDialog(
 
     private fun updateLogoutSubtitle() {
         val overage =
-            (viewModel.deviceUsages.value?.size ?: 0) - (viewModel.limitConfig.value?.overallLimit
+            (viewModel.devices.value?.size ?: 0) - (viewModel.limitConfig.value?.overallLimit
                 ?: viewModel.defaultDeviceLimit.value ?: 0)
         view?.findViewById<TextView>(R.id.logout_subtitle)?.text = resources.getQuantityString(
             R.plurals.logout_to_proceed, overage, overage

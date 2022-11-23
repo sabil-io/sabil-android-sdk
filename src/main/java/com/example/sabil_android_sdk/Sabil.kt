@@ -26,7 +26,9 @@ import java.util.*
 
 
 object Sabil {
-    const val baseUrl = "https://api.sabil.io"
+    private const val baseUrl = "https://api.sabil.io"
+    private const val ANDROID_VENDOR_ID_KEY = "sabil_vendor_id"
+    private const val DEVICE_ID_KEY = "sabil_device_id"
     lateinit var clientId: String
     lateinit var userId: String
     var secret: String? = null
@@ -34,11 +36,12 @@ object Sabil {
     var onLogoutCurrentDevice: (() -> Unit?)? = null
     var onLogoutOtherDevice: (() -> Unit?)? = null
     var onLimitExceeded: (() -> Unit?)? = null
-    val viewModel =
+    private val viewModel =
         ViewModelProvider {
             ViewModelStore()
         }[SabilDialogViewModel::class.java]
     var dialog: SabilDialog? = null
+    private lateinit var sharedPreferences: SharedPreferences
 
     fun configure(
         context: Context,
@@ -51,17 +54,11 @@ object Sabil {
         onLogoutOtherDevice: (() -> Unit?)? = null,
         onLimitExceeded: (() -> Unit?)? = null
     ) {
-        val sharedPreferences =
+        sharedPreferences =
             context.getSharedPreferences("sabil_shared_preference", Context.MODE_PRIVATE)
-        if (sharedPreferences.contains("sabil_device_id")) {
-            val stored = sharedPreferences.getString("sabil_device_id", "-1")
-            if (stored is String && stored != "-1") {
-                viewModel.deviceId.value = stored
-            } else {
-                generateDeviceId(sharedPreferences)
-            }
-        } else {
-            generateDeviceId(sharedPreferences)
+        val stored = sharedPreferences.getString(DEVICE_ID_KEY, null)
+        if (stored is String) {
+            viewModel.deviceId.value = stored
         }
 
         this.clientId = clientId
@@ -78,85 +75,101 @@ object Sabil {
         this.onLimitExceeded = onLimitExceeded
     }
 
-    private fun generateDeviceId(sharedPreferences: SharedPreferences) {
-        viewModel.deviceId.value = UUID.randomUUID().toString()
+    private fun getIdentifierForVendor(): String {
+        val storedId = sharedPreferences.getString(ANDROID_VENDOR_ID_KEY, null)
+        if (storedId is String) {
+            return storedId
+        }
+        val newId = UUID.randomUUID().toString()
         with(sharedPreferences.edit()) {
-            putString("sabil_device_id", viewModel.deviceId.value)
+            putString(ANDROID_VENDOR_ID_KEY, newId)
             commit()
         }
+        return newId
     }
 
-    fun attach(fragmentManager: FragmentManager) {
+    fun attach(fragmentManager: FragmentManager, metadata: Map<String, String>? = null) {
         if (!this::userId.isInitialized) {
             Log.d("SabilSDK", "You must initialize the userId before calling attach")
             return
         }
-        httpRequest<SabilAttachResponse, SabilAttachData>(
+        httpRequest<SabilAccessState, SabilAttachData>(
             "POST",
-            "$baseUrl/usage/attach",
+            "$baseUrl/v2/access",
             SabilAttachData(
-                viewModel.deviceId.value ?: "",
+                viewModel.deviceId.value,
+                SabilSignals(getIdentifierForVendor()),
                 userId,
                 SabilDeviceInfo(
                     SabilOS("Android", android.os.Build.VERSION.RELEASE),
-                    SabilDevice(android.os.Build.MANUFACTURER, "mobile", android.os.Build.MODEL)
-                )
+                    SabilDeviceDetails(
+                        android.os.Build.MANUFACTURER,
+                        "mobile",
+                        android.os.Build.MODEL
+                    )
+                ),
+                metadata,
+                null
             )
-        ) { attachResponse ->
-            if (attachResponse !is SabilAttachResponse) {
+        ) { state ->
+            if (state !is SabilAccessState) {
                 return@httpRequest
             }
-            viewModel.defaultDeviceLimit.value = attachResponse.default_device_limit
-            if (!attachResponse.success || attachResponse.attached_devices <= (viewModel.limitConfig.value?.overallLimit
-                    ?: attachResponse.default_device_limit)
+            viewModel.defaultDeviceLimit.value = state.default_device_limit
+            if (!state.success || state.attached_devices <= (viewModel.limitConfig.value?.overallLimit
+                    ?: state.default_device_limit)
             ) {
                 return@httpRequest
             }
             onLimitExceeded?.invoke()
             val showDialog =
-                appearanceConfig?.showBlockingDialog ?: attachResponse.block_over_usage
+                appearanceConfig?.showBlockingDialog ?: state.block_over_usage
             if (!showDialog) {
                 return@httpRequest
             }
             dialog = SabilDialog(viewModel) {
-                for (usage in it) {
-                    detach(usage)
+                for (device in it) {
+                    detach(device)
                 }
             }
             dialog?.isCancelable = false
             dialog?.show(fragmentManager, SabilDialog.TAG)
             getUserAttachedDevices {
-                viewModel.deviceUsages.value = it.toMutableList()
+                viewModel.devices.value = it.toMutableList()
             }
         }
     }
 
 
-    fun detach(usage: SabilDeviceUsage?) {
-        viewModel.detachLoading.value = true
-        if (!this::userId.isInitialized) {
-            Log.d("SabilSDK", "You must initialize the userId before calling attach")
-            viewModel.detachLoading.value = false
+    fun detach(device: SabilDevice?) {
+        val idToDetach = device?.id ?: viewModel.deviceId.value
+        if (idToDetach !is String) {
+            Log.d("SabilSDK", "Device id to detach not found ")
             return
         }
-        httpRequest<SabilAttachResponse, SabilDetachData>(
+        if (!this::userId.isInitialized) {
+            Log.d("SabilSDK", "You must initialize the userId before calling detach")
+            return
+        }
+        viewModel.detachLoading.value = true
+        httpRequest<SabilAccessState, SabilDetachData>(
             "POST",
-            "$baseUrl/usage/detach",
-            SabilDetachData(usage?.device_id ?: viewModel.deviceId.value ?: "", userId)
-        ) { attachResponse ->
-            if (attachResponse !is SabilAttachResponse || !attachResponse.success) {
+            "$baseUrl/v2/access/detach",
+            SabilDetachData(idToDetach, userId)
+        ) { state ->
+            if (state !is SabilAccessState || !state.success) {
                 return@httpRequest
             }
-            if (usage == null || usage.device_id == viewModel.deviceId.value) {
+            if (device == null || device.id == viewModel.deviceId.value) {
                 onLogoutCurrentDevice?.invoke()
             }
-            viewModel.deviceUsages.value?.removeAll { it.device_id == usage?.device_id }
-            viewModel.deviceUsages.postValue(viewModel.deviceUsages.value)
+            viewModel.devices.value?.removeAll { it.id == device?.id }
+            viewModel.devices.postValue(viewModel.devices.value)
             viewModel.detachLoading.value = true
-            viewModel.defaultDeviceLimit.value = attachResponse.default_device_limit
-            if ((viewModel.deviceUsages.value?.size
+            viewModel.defaultDeviceLimit.value = state.default_device_limit
+            if ((viewModel.devices.value?.size
                     ?: 0) <= (viewModel.limitConfig.value?.overallLimit
-                    ?: attachResponse.default_device_limit)
+                    ?: state.default_device_limit)
             ) {
                 dialog?.dismiss()
                 dialog = null
@@ -164,14 +177,14 @@ object Sabil {
         }
     }
 
-    fun getUserAttachedDevices(onComplete: (List<SabilDeviceUsage>) -> Unit) {
+    fun getUserAttachedDevices(onComplete: (List<SabilDevice>) -> Unit) {
         if (!this::userId.isInitialized) {
             Log.d("SabilSDK", "You must initialize the userId before calling attach")
             return
         }
-        httpRequest<List<SabilDeviceUsage>, Unit>(
+        httpRequest<List<SabilDevice>, Unit>(
             "GET",
-            "$baseUrl/usage/$userId/attached_devices",
+            "$baseUrl/v2/access/user/$userId/attached_devices",
             null
         ) {
             onComplete(it ?: listOf())
