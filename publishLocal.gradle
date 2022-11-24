@@ -7,9 +7,9 @@ task sourceJar(type: Jar) {
 
 project.afterEvaluate {
     publishToMavenLocal {
-        def groupId = LIBRARY_GROUP
-        def artifactId = LIBRARY_ARTIFACT_ID
-        def versionName = LIBRARY_VERSION_NAME
+        def groupId = "io.sabil"
+        def artifactId = "sabil_android_sdk"
+        def versionName = "2.0.4"
         def debugSuffix = "-debug"
         def releaseSuffix = "-release"
         publishing {
