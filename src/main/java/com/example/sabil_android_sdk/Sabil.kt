@@ -2,6 +2,7 @@ package com.example.sabil_android_sdk
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -26,10 +27,11 @@ import java.util.*
 
 
 object Sabil {
-    private const val baseUrl = "https://api.sabil.io"
+    private const val BASE_URL = "https://api.sabil.io"
     private const val ANDROID_VENDOR_ID_KEY = "sabil_vendor_id"
     private const val DEVICE_ID_KEY = "sabil_device_id"
-    lateinit var clientId: String
+    private const val DEVICE_IDENTIFIER_KEY = "sabil_device_identifier"
+    private lateinit var clientId: String
     lateinit var userId: String
     var secret: String? = null
     var appearanceConfig: SabilAppearanceConfig? = null
@@ -42,6 +44,27 @@ object Sabil {
         }[SabilDialogViewModel::class.java]
     var dialog: SabilDialog? = null
     private lateinit var sharedPreferences: SharedPreferences
+    var deviceId: String?
+        get() = viewModel.deviceId.value
+        set(value) {
+            viewModel.deviceId.value = value
+        }
+    var deviceIdentity: String?
+        get() {
+            if (!this::sharedPreferences.isInitialized) {
+                return null
+            }
+            return sharedPreferences.getString(DEVICE_IDENTIFIER_KEY, null)
+        }
+        set(value) {
+            if (!this::sharedPreferences.isInitialized) {
+                return
+            }
+            with(sharedPreferences.edit()) {
+                putString(DEVICE_IDENTIFIER_KEY, value)
+                commit()
+            }
+        }
 
     fun configure(
         context: Context,
@@ -58,7 +81,7 @@ object Sabil {
             context.getSharedPreferences("sabil_shared_preference", Context.MODE_PRIVATE)
         val stored = sharedPreferences.getString(DEVICE_ID_KEY, null)
         if (stored is String) {
-            viewModel.deviceId.value = stored
+            deviceId = stored
         }
 
         this.clientId = clientId
@@ -95,19 +118,12 @@ object Sabil {
         }
         httpRequest<SabilAccessState, SabilAttachData>(
             "POST",
-            "$baseUrl/v2/access",
+            "$BASE_URL/v2/access",
             SabilAttachData(
                 viewModel.deviceId.value,
                 SabilSignals(getIdentifierForVendor()),
                 userId,
-                SabilDeviceInfo(
-                    SabilOS("Android", android.os.Build.VERSION.RELEASE),
-                    SabilDeviceDetails(
-                        android.os.Build.MANUFACTURER,
-                        "mobile",
-                        android.os.Build.MODEL
-                    )
-                ),
+                deviceInfo(),
                 metadata,
                 null
             )
@@ -116,7 +132,7 @@ object Sabil {
                 return@httpRequest
             }
             viewModel.defaultDeviceLimit.value = state.default_device_limit
-            viewModel.deviceId.value = state.device_id
+            deviceId = state.device_id
             if (!state.success || state.attached_devices <= (viewModel.limitConfig.value?.overallLimit
                     ?: state.default_device_limit)
             ) {
@@ -141,6 +157,15 @@ object Sabil {
         }
     }
 
+    private fun deviceInfo() = SabilDeviceInfo(
+        SabilOS("Android", Build.VERSION.RELEASE),
+        SabilDeviceDetails(
+            Build.MANUFACTURER,
+            "mobile",
+            Build.MODEL
+        )
+    )
+
 
     fun detach(device: SabilDevice?) {
         val idToDetach = device?.id ?: viewModel.deviceId.value
@@ -155,7 +180,7 @@ object Sabil {
         viewModel.detachLoading.value = true
         httpRequest<SabilAccessState, SabilDetachData>(
             "POST",
-            "$baseUrl/v2/access/detach",
+            "$BASE_URL/v2/access/detach",
             SabilDetachData(idToDetach, userId)
         ) { state ->
             if (state !is SabilAccessState || !state.success) {
@@ -178,8 +203,25 @@ object Sabil {
         }
     }
 
-    fun identify(metadata: Map<String, String>? = null) {
-
+    fun identify(
+        metadata: Map<String, String>? = null,
+        onComplete: ((SabilIdentifyResponse?) -> Unit)? = null
+    ) {
+        if (!this::clientId.isInitialized) {
+            Log.d("SabilSDK", "You must initialize the clientId before calling attach")
+            return
+        }
+        httpRequest<SabilIdentifyResponse, SabilIdentifyData>(
+            "POST", "$BASE_URL/v2/identity", SabilIdentifyData(
+                deviceId,
+                SabilSignals(getIdentifierForVendor()),
+                deviceInfo(),
+                metadata,
+                deviceIdentity
+            )
+        ) {
+            onComplete?.invoke(it)
+        }
     }
 
     fun getUserAttachedDevices(onComplete: (List<SabilDevice>) -> Unit) {
@@ -189,7 +231,7 @@ object Sabil {
         }
         httpRequest<List<SabilDevice>, Unit>(
             "GET",
-            "$baseUrl/v2/access/user/$userId/attached_devices",
+            "$BASE_URL/v2/access/user/$userId/attached_devices",
             null
         ) {
             onComplete(it ?: listOf())
