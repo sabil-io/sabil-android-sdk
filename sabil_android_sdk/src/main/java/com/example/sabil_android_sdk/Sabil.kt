@@ -147,13 +147,13 @@ object Sabil {
      * Attaches a device to a user. You must have set the clientId and the user id before colling this.
      * Otherwise, it will do nothing.
      * @param fragmentManager a FragmentManager object used to present the dialog if limit is
-     * exceeded and the blocking dialog is enabled.
+     * exceeded and the blocking dialog is enabled. Pass null if not neeeded.
      * @param metadata a key-value map to store any data you want. Sabil will pass this along with
      * any webhook or other server-to-server calls.
      * @param onComplete a callback to be triggered once the attach finishes.
      */
     fun attach(
-        fragmentManager: FragmentManager,
+        fragmentManager: FragmentManager? = null,
         metadata: Map<String, String>? = null,
         onComplete: (() -> Unit)? = null
     ) {
@@ -195,6 +195,9 @@ object Sabil {
                 for (device in it) {
                     detach(device)
                 }
+            }
+            if (fragmentManager !is FragmentManager) {
+                return@httpRequest
             }
             dialog?.isCancelable = false
             dialog?.show(fragmentManager, SabilDialog.TAG)
